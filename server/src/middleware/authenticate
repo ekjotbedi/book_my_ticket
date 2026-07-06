@@ -1,0 +1,21 @@
+// Authentication middleware: validates the Bearer JWT and attaches req.user.
+
+import { ApiError } from "../utils/ApiError.js";
+import { verifyToken } from "../utils/auth.js";
+
+export function authenticate(req, _res, next) {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    return next(ApiError.unauthorized("Missing or malformed Authorization header"));
+  }
+
+  try {
+    const payload = verifyToken(token);
+    req.user = { id: payload.sub, email: payload.email, role: payload.role };
+    next();
+  } catch {
+    next(ApiError.unauthorized("Invalid or expired token"));
+  }
+}
