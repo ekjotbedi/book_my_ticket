@@ -1,0 +1,134 @@
+import { jest } from "@jest/globals";
+import request from "supertest";
+import { createApp } from "../src/app.js";
+import { seedFixture } from "./helpers.js";
+
+const app = createApp();
+let fixture;
+
+beforeEach(() => {
+  fixture = seedFixture();
+});
+
+async function registerAndLogin() {
+  const email = `user${Date.now()}@example.com`;
+  const res = await request(app)
+    .post("/api/auth/register")
+    .send({ email, name: "Tester", password: "password123" });
+  return res.body.token;
+}
+
+describe("Auth", () => {
+  test("registers a new user and returns a token", async () => {
+    const res = await request(app)
+      .post("/api/auth/register")
+      .send({ email: "new@example.com", name: "New", password: "password123" });
+    expect(res.status).toBe(201);
+    expect(res.body.token).toBeTruthy();
+    expect(res.body.user.email).toBe("new@example.com");
+  });
+
+  test("rejects duplicate email with 409", async () => {
+    const body = { email: "dup@example.com", name: "Dup", password: "password123" };
+    await request(app).post("/api/auth/register").send(body);
+    const res = await request(app).post("/api/auth/register").send(body);
+    expect(res.status).toBe(409);
+  });
+
+  test("rejects invalid registration with 400", async () => {
+    const res = await request(app)
+      .post("/api/auth/register")
+      .send({ email: "not-an-email", name: "", password: "123" });
+    expect(res.status).toBe(400);
+    expect(res.body.details.length).toBeGreaterThan(0);
+  });
+
+  test("login fails with wrong password", async () => {
+    await request(app)
+      .post("/api/auth/register")
+      .send({ email: "a@example.com", name: "A", password: "password123" });
+    const res = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "a@example.com", password: "wrong" });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("Events", () => {
+  test("lists events with session counts", async () => {
+    const res = await request(app).get("/api/events");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].sessionCount).toBe(1);
+  });
+
+  test("returns a session with its seat map", async () => {
+    const res = await request(app).get(`/api/sessions/${fixture.sessionId}`);
+    expect(res.status).toBe(200);
+    expect(res.body.totalSeats).toBe(4);
+    expect(res.body.availableSeats).toBe(4);
+    expect(res.body.seats).toHaveLength(4);
+  });
+
+  test("404 for unknown event", async () => {
+    const res = await request(app).get("/api/events/99999");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("Bookings", () => {
+  test("requires authentication", async () => {
+    const res = await request(app)
+      .post("/api/bookings")
+      .send({ sessionId: fixture.sessionId, seatIds: [fixture.seatIds[0]] });
+    expect(res.status).toBe(401);
+  });
+
+  test("books seats, then they show as taken and in My Tickets", async () => {
+    const token = await registerAndLogin();
+    const seatIds = [fixture.seatIds[0], fixture.seatIds[1]];
+
+    const res = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: fixture.sessionId, seatIds });
+    expect(res.status).toBe(201);
+    expect(res.body.seats).toHaveLength(2);
+    expect(res.body.totalCents).toBe(10000);
+
+    const session = await request(app).get(`/api/sessions/${fixture.sessionId}`);
+    expect(session.body.availableSeats).toBe(2);
+
+    const mine = await request(app)
+      .get("/api/bookings/me")
+      .set("Authorization", `Bearer ${token}`);
+    expect(mine.body).toHaveLength(1);
+    expect(mine.body[0].seats).toHaveLength(2);
+  });
+
+  test("cancelling a booking frees the seats", async () => {
+    const token = await registerAndLogin();
+    const booking = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: fixture.sessionId, seatIds: [fixture.seatIds[0]] });
+
+    const cancel = await request(app)
+      .delete(`/api/bookings/${booking.body.id}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(cancel.status).toBe(200);
+    expect(cancel.body.status).toBe("CANCELLED");
+
+    const session = await request(app).get(`/api/sessions/${fixture.sessionId}`);
+    expect(session.body.availableSeats).toBe(4);
+  });
+
+  test("rejects a seat that does not belong to the session", async () => {
+    const token = await registerAndLogin();
+    const res = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: fixture.sessionId, seatIds: [99999] });
+    expect(res.status).toBe(400);
+  });
+});
