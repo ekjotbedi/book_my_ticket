@@ -1,0 +1,46 @@
+// Auth service - all user persistence is raw SQL via prepared statements.
+
+import { db } from "../db/index.js";
+import { ApiError } from "../utils/ApiError.js";
+import { hashPassword, verifyPassword, signToken } from "../utils/auth.js";
+
+const publicUser = (row) => ({
+  id: row.id,
+  email: row.email,
+  name: row.name,
+  role: row.role,
+  createdAt: row.created_at,
+});
+
+export function register({ email, name, password }) {
+  const existing = db
+    .prepare("SELECT id FROM users WHERE email = ?")
+    .get(email);
+  if (existing) throw ApiError.conflict("Email is already registered");
+
+  const info = db
+    .prepare(
+      "INSERT INTO users (email, name, password) VALUES (?, ?, ?)"
+    )
+    .run(email, name, hashPassword(password));
+
+  const user = db
+    .prepare("SELECT * FROM users WHERE id = ?")
+    .get(info.lastInsertRowid);
+
+  return { user: publicUser(user), token: signToken(user) };
+}
+
+export function login({ email, password }) {
+  const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+  if (!user || !verifyPassword(password, user.password)) {
+    throw ApiError.unauthorized("Invalid email or password");
+  }
+  return { user: publicUser(user), token: signToken(user) };
+}
+
+export function getById(id) {
+  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+  if (!user) throw ApiError.notFound("User not found");
+  return publicUser(user);
+}
