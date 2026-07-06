@@ -1,0 +1,41 @@
+import { Router } from "express";
+import { authenticate } from "../middleware/authenticate.js";
+import { validate } from "../middleware/validate.js";
+import * as auth from "../controllers/authController.js";
+import * as events from "../controllers/eventController.js";
+import * as bookings from "../controllers/bookingController.js";
+
+const router = Router();
+
+router.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+// --- Auth ---------------------------------------------------------------
+router.post("/auth/register", validate(auth.registerSchema), auth.register);
+router.post("/auth/login", validate(auth.loginSchema), auth.login);
+router.get("/auth/me", authenticate, auth.me);
+
+// --- Events / sessions (public) -----------------------------------------
+router.get("/events", events.listEvents);
+router.get("/events/:id", validate(events.idParamSchema, "params"), events.getEvent);
+router.get(
+  "/sessions/:id",
+  validate(events.idParamSchema, "params"),
+  events.getSession
+);
+
+// --- Bookings (authenticated) -------------------------------------------
+router.post(
+  "/bookings",
+  authenticate,
+  validate(bookings.createBookingSchema),
+  bookings.createBooking
+);
+router.get("/bookings/me", authenticate, bookings.myBookings);
+router.delete(
+  "/bookings/:id",
+  authenticate,
+  validate(bookings.idParamSchema, "params"),
+  bookings.cancelBooking
+);
+
+export default router;
