@@ -1,0 +1,42 @@
+// Database connection (raw SQL via better-sqlite3).
+//
+// better-sqlite3 is synchronous, which keeps the transaction code for the
+// concurrency-safe booking flow simple and easy to read. A single shared
+// connection is exported and reused across the app.
+
+import Database from "better-sqlite3";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "../config.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Resolve the database file path and make sure its folder exists.
+const dbFile = path.resolve(process.cwd(), config.databaseFile);
+fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+
+export const db = new Database(dbFile);
+
+// Pragmas: enforce foreign keys and use WAL for better concurrency.
+db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
+
+/** Create all tables from schema.sql (idempotent). */
+export function initSchema() {
+  const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf-8");
+  db.exec(schema);
+}
+
+/** Drop everything and recreate - used by tests and `npm run db:init`. */
+export function resetSchema() {
+  db.exec(`
+    DROP TABLE IF EXISTS tickets;
+    DROP TABLE IF EXISTS bookings;
+    DROP TABLE IF EXISTS seats;
+    DROP TABLE IF EXISTS sessions;
+    DROP TABLE IF EXISTS events;
+    DROP TABLE IF EXISTS users;
+  `);
+  initSchema();
+}
